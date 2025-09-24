@@ -2,13 +2,10 @@
 
 # pylint: disable=broad-exception-raised
 
-import fileinput
 import glob
-import os.path
+import os
+import string
 import time
-from itertools import groupby
-
-from toolz.itertoolz import concat, pluck
 
 def mapreduce(
     mapper,
@@ -26,8 +23,8 @@ def mapreduce(
         return sequence
 
     def apply_shuffle_and_sort(pairs_sequence):
-        pairs_sequence = sorted(pairs_sequence)
-        return pairs_sequence
+        # Ordena SOLO por la clave
+        return sorted(pairs_sequence, key=lambda x: x[0])
 
     def write_results_to_file(result, output_dir):
         with open(f"{output_dir}/part-00000", "w", encoding="utf-8") as f:
@@ -38,9 +35,11 @@ def mapreduce(
         with open(f"{output_dir}/_SUCCESS", "w", encoding="utf-8") as f:
             f.write("")
 
-    def create_output_dir_or_fail(output_dir):
+    def create_output_dir(output_dir):
+        # Si ya existe, lo vaciamos en lugar de fallar
         if os.path.exists(output_dir):
-            raise Exception(f"Output directory '{output_dir}' already exists.")
+            for file in glob.glob(f"{output_dir}/*"):
+                os.remove(file)
         else:
             os.makedirs(output_dir)
 
@@ -48,7 +47,7 @@ def mapreduce(
     pairs_sequence = mapper(sequence)
     pairs_sequence = apply_shuffle_and_sort(pairs_sequence)
     result = reducer(pairs_sequence)
-    create_output_dir_or_fail(output_dir)
+    create_output_dir(output_dir)
     write_results_to_file(result, output_dir)
     create_success_file(output_dir)
 
@@ -61,7 +60,6 @@ def run_experiment(
     input_dir,
     output_dir,
 ):
-
     def initialize_directory(directory):
         if os.path.exists(directory):
             for file in glob.glob(f"{directory}/*"):
@@ -83,6 +81,7 @@ def run_experiment(
                 with open(f"{input_dir}/{new_filename}", "w", encoding="utf-8") as f2:
                     f2.write(text)
 
+    # limpiar input_dir antes de generar archivos
     initialize_directory(input_dir)
     copy_and_number_raw_files_to_input_folder(raw_dir, input_dir, n)
 
@@ -108,27 +107,25 @@ def wordcount_mapper(sequence):
         line = line.replace("\n", "")
         words = line.split()
         pairs_sequence.extend((word, 1) for word in words)
-
     return pairs_sequence
 
 
 def wordcount_reducer(pairs_sequence):
-    result = []
+    """Reducer robusto: agrupa por clave con un diccionario"""
+    counts = {}
     for key, value in pairs_sequence:
-        if result and result[-1][0] == key:
-            result[-1] = (key, result[-1][1] + value)
-        else:
-            result.append((key, value))
-    return result
+        counts[key] = counts.get(key, 0) + value
+    # Convertir a lista ordenada por clave
+    return sorted(counts.items())
 
 
 # Example usage:
 if __name__ == "__main__":
     run_experiment(
-        n=5,  # or any number you want
+        n=5,
         mapper=wordcount_mapper,
         reducer=wordcount_reducer,
         raw_dir="files/raw",
         input_dir="files/input",
         output_dir="files/output",
-)
+    )
